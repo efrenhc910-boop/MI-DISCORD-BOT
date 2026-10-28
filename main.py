@@ -21,7 +21,7 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 # Pega aquí la URL pública y directa de tu imagen grande.
 # Déjala vacía si no quieres mostrar ninguna imagen.
 # No es un thumbnail: se utiliza embed.set_image().
-EMBED_IMAGE_URL = ""
+EMBED_IMAGE_URL = "https://cdn.discordapp.com/attachments/1563710649429794816/1564143687087169536/Screenshot_20261024-1643262.jpg?ex=6ae37d93&is=6ae22c13&hm=24eebc0c2230088784a5e4c4c4c42f9e32131cac0ae2fe32b0217f85669d2eb5&"
 
 # Número máximo de intentos, contando el primero.
 MAX_RETRIES = 3
