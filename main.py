@@ -9,14 +9,16 @@ from google import genai
 from google.genai import types
 
 # ==================================================
-# 🌸 SAKURA AI | CONFIGURACIÓN
+# 🌸 SAKURA AI - CONFIGURACIÓN
 # ==================================================
 
 load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+# Si FadeHost define GEMINI_MODEL, ese valor tiene prioridad.
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -40,25 +42,28 @@ acciones que no realizaste.
 """
 
 # ==================================================
-# 🔐 VALIDACIÓN DE CONFIGURACIÓN
+# 🔐 VALIDAR CONFIGURACIÓN
 # ==================================================
 
 if not DISCORD_TOKEN:
     raise RuntimeError(
-        "❌ Falta DISCORD_TOKEN en las variables de entorno."
+        "Falta DISCORD_TOKEN en las variables de entorno de FadeHost."
     )
 
 if not GEMINI_API_KEY:
     raise RuntimeError(
-        "❌ Falta GEMINI_API_KEY en las variables de entorno."
+        "Falta GEMINI_API_KEY en las variables de entorno de FadeHost."
     )
 
-# Crear cliente de Gemini
+# ==================================================
+# 🧠 CLIENTE DE GEMINI
+# ==================================================
+
 ai = genai.Client(api_key=GEMINI_API_KEY)
 
 # ==================================================
 # 🤖 CREACIÓN DEL BOT DE DISCORD
-# IMPORTANTE: ANTES DE CUALQUIER @bot.event
+# Debe ir antes de cualquier @bot.event
 # ==================================================
 
 intents = discord.Intents.default()
@@ -70,7 +75,7 @@ bot = discord.Client(intents=intents)
 # Memoria temporal de conversación por usuario
 chat_sessions = {}
 
-# Bloqueo de solicitudes simultáneas por usuario
+# Evitar consultas simultáneas del mismo usuario
 user_locks = {}
 
 
@@ -81,19 +86,19 @@ def get_user_lock(user_id: int) -> asyncio.Lock:
 
 
 # ==================================================
-# 🌸 EVENTO: CONEXIÓN CON DISCORD
+# 🌸 EVENTO DE CONEXIÓN
 # ==================================================
 
 @bot.event
 async def on_ready():
     print("\n")
     print("╔══════════════════════════════════════════╗")
-    print("║       🌸 SAKURA AI — EN LÍNEA 🌸        ║")
+    print("║        🌸 SAKURA AI EN LÍNEA 🌸         ║")
     print("╠══════════════════════════════════════════╣")
-    print(f"║ 🤖 BOT: {str(bot.user)[:30]:<30} ║")
-    print("║ ✅ CONEXIÓN CON DISCORD ESTABLECIDA     ║")
-    print("║ 💬 COMANDO: .S pregunta                 ║")
-    print("║ 🧠 MOTOR: GOOGLE GEMINI                 ║")
+    print(f"║ Bot: {str(bot.user)[:32]:<32} ║")
+    print("║ Estado: CONECTADO A DISCORD              ║")
+    print("║ Comando: .S pregunta                     ║")
+    print(f"║ Modelo: {GEMINI_MODEL[:32]:<32} ║")
     print("╚══════════════════════════════════════════╝")
     print("\n")
 
@@ -101,19 +106,17 @@ async def on_ready():
 
 
 # ==================================================
-# 💬 EVENTO: MENSAJES Y COMANDO .S
+# 💬 EVENTO DE MENSAJES Y COMANDO .S
 # ==================================================
 
 @bot.event
 async def on_message(message: discord.Message):
-
-    # Ignorar mensajes enviados por bots
+    # Ignorar mensajes de bots
     if message.author.bot:
         return
 
     content = message.content.strip()
 
-    # Registro para diagnosticar mensajes recibidos
     logger.info(
         "📩 Mensaje recibido | Canal: %s | Usuario: %s",
         getattr(message.channel, "name", "mensaje privado"),
@@ -131,7 +134,7 @@ async def on_message(message: discord.Message):
     if not prompt:
         await message.reply(
             "🌸 ¡Hola! Soy Sakura AI.\n"
-            "Escribe una pregunta después de `.S`.\n\n"
+            "Escribe tu pregunta después de `.S`.\n"
             "Ejemplo: `.S Explícame qué es Roblox Lua`",
             mention_author=False,
         )
@@ -139,14 +142,17 @@ async def on_message(message: discord.Message):
 
     if len(prompt) > 1500:
         await message.reply(
-            "⚠️ Tu pregunta supera el límite de 1500 caracteres.",
+            "⚠️ Tu pregunta no puede superar los 1500 caracteres.",
             mention_author=False,
         )
         return
 
     async with get_user_lock(message.author.id):
         try:
-            logger.info("🧠 Preparando consulta para Gemini...")
+            logger.info(
+                "🧠 Consultando Gemini con el modelo %s...",
+                GEMINI_MODEL,
+            )
 
             chat = chat_sessions.get(message.author.id)
 
@@ -171,14 +177,14 @@ async def on_message(message: discord.Message):
             if not answer:
                 logger.warning("Gemini devolvió una respuesta vacía.")
                 await message.reply(
-                    "🌸 No recibí texto de Gemini. Inténtalo otra vez.",
+                    "🌸 Gemini no devolvió texto. Inténtalo de nuevo.",
                     mention_author=False,
                 )
                 return
 
-            logger.info("✅ Gemini respondió; enviando respuesta a Discord.")
+            logger.info("✅ Gemini respondió correctamente.")
 
-            # Discord limita cada mensaje a 2000 caracteres.
+            # Dividir respuestas para respetar el límite de Discord
             for i in range(0, len(answer), 1900):
                 await message.reply(
                     answer[i:i + 1900],
@@ -186,16 +192,39 @@ async def on_message(message: discord.Message):
                     allowed_mentions=discord.AllowedMentions.none(),
                 )
 
-            logger.info("✅ Respuesta enviada correctamente.")
+            logger.info("✅ Respuesta enviada a Discord.")
 
-        except Exception:
+        except Exception as error:
             logger.exception("❌ Error procesando la pregunta.")
+
+            # Mensajes sencillos para los errores más habituales
+            error_text = str(error)
+            lower_error = error_text.lower()
+
+            if "404" in error_text or "not_found" in lower_error:
+                user_message = (
+                    "⚠️ El modelo de Gemini configurado no está disponible. "
+                    "Revisa GEMINI_MODEL en FadeHost."
+                )
+            elif "429" in error_text or "resource_exhausted" in lower_error:
+                user_message = (
+                    "⏳ Gemini ha alcanzado temporalmente un límite de uso. "
+                    "Espera un poco y vuelve a intentarlo."
+                )
+            elif "401" in error_text or "403" in error_text:
+                user_message = (
+                    "🔑 Gemini rechazó la solicitud. "
+                    "Revisa la clave y los permisos de la API."
+                )
+            else:
+                user_message = (
+                    "❌ No pude completar tu pregunta. "
+                    "Revisa los registros de FadeHost."
+                )
 
             try:
                 await message.reply(
-                    "❌ No pude completar tu consulta.\n"
-                    "Revisa los registros de FadeHost para identificar "
-                    "el error de Discord o Gemini.",
+                    user_message,
                     mention_author=False,
                 )
             except discord.HTTPException:
@@ -203,11 +232,12 @@ async def on_message(message: discord.Message):
 
 
 # ==================================================
-# 🚀 INICIO DEL BOT
+# 🚀 INICIAR SAKURA AI
 # ==================================================
 
 if __name__ == "__main__":
     print("🚀 Iniciando Sakura AI...")
-    print("⏳ Conectando con Discord; espera la confirmación...")
+    print(f"🧠 Modelo configurado: {GEMINI_MODEL}")
+    print("⏳ Conectando con Discord...")
 
     bot.run(DISCORD_TOKEN)
