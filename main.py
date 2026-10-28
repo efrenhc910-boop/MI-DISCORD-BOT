@@ -16,8 +16,6 @@ load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-# Si FadeHost define GEMINI_MODEL, ese valor tiene prioridad.
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 
 logging.basicConfig(
@@ -56,14 +54,13 @@ if not GEMINI_API_KEY:
     )
 
 # ==================================================
-# 🧠 CLIENTE DE GEMINI
+# 🧠 CLIENTE GEMINI
 # ==================================================
 
 ai = genai.Client(api_key=GEMINI_API_KEY)
 
 # ==================================================
-# 🤖 CREACIÓN DEL BOT DE DISCORD
-# Debe ir antes de cualquier @bot.event
+# 🤖 CREAR BOT DE DISCORD
 # ==================================================
 
 intents = discord.Intents.default()
@@ -72,10 +69,7 @@ intents.messages = True
 
 bot = discord.Client(intents=intents)
 
-# Memoria temporal de conversación por usuario
 chat_sessions = {}
-
-# Evitar consultas simultáneas del mismo usuario
 user_locks = {}
 
 
@@ -97,21 +91,20 @@ async def on_ready():
     print("╠══════════════════════════════════════════╣")
     print(f"║ Bot: {str(bot.user)[:32]:<32} ║")
     print("║ Estado: CONECTADO A DISCORD              ║")
-    print("║ Comando: .S pregunta                     ║")
     print(f"║ Modelo: {GEMINI_MODEL[:32]:<32} ║")
+    print("║ Comando: .S pregunta                     ║")
     print("╚══════════════════════════════════════════╝")
     print("\n")
 
-    logger.info("Sakura AI está lista para recibir mensajes.")
+    logger.info("Bot conectado y listo para recibir mensajes.")
 
 
 # ==================================================
-# 💬 EVENTO DE MENSAJES Y COMANDO .S
+# 💬 EVENTO DE MENSAJES
 # ==================================================
 
 @bot.event
 async def on_message(message: discord.Message):
-    # Ignorar mensajes de bots
     if message.author.bot:
         return
 
@@ -119,17 +112,16 @@ async def on_message(message: discord.Message):
 
     logger.info(
         "📩 Mensaje recibido | Canal: %s | Usuario: %s",
-        getattr(message.channel, "name", "mensaje privado"),
+        getattr(message.channel, "name", "privado"),
         message.author,
     )
 
-    # Aceptar .S, .s y .S seguido de una pregunta
     if content.lower() != ".s" and not content.lower().startswith(".s "):
         return
 
     prompt = content[2:].strip()
 
-    logger.info("🌸 Comando .S detectado")
+    logger.info("🌸 Comando .S detectado.")
 
     if not prompt:
         await message.reply(
@@ -150,7 +142,7 @@ async def on_message(message: discord.Message):
     async with get_user_lock(message.author.id):
         try:
             logger.info(
-                "🧠 Consultando Gemini con el modelo %s...",
+                "🧠 Enviando pregunta a Gemini. Modelo: %s",
                 GEMINI_MODEL,
             )
 
@@ -166,10 +158,14 @@ async def on_message(message: discord.Message):
                 )
                 chat_sessions[message.author.id] = chat
 
+            # Gemini tiene un límite de 40 segundos para responder.
             async with message.channel.typing():
-                response = await asyncio.to_thread(
-                    chat.send_message,
-                    prompt,
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        chat.send_message,
+                        prompt,
+                    ),
+                    timeout=40,
                 )
 
             answer = (response.text or "").strip()
@@ -177,14 +173,13 @@ async def on_message(message: discord.Message):
             if not answer:
                 logger.warning("Gemini devolvió una respuesta vacía.")
                 await message.reply(
-                    "🌸 Gemini no devolvió texto. Inténtalo de nuevo.",
+                    "🌸 Gemini no devolvió texto. Prueba otra pregunta.",
                     mention_author=False,
                 )
                 return
 
             logger.info("✅ Gemini respondió correctamente.")
 
-            # Dividir respuestas para respetar el límite de Discord
             for i in range(0, len(answer), 1900):
                 await message.reply(
                     answer[i:i + 1900],
@@ -194,31 +189,41 @@ async def on_message(message: discord.Message):
 
             logger.info("✅ Respuesta enviada a Discord.")
 
+        except asyncio.TimeoutError:
+            logger.error("⏱️ Gemini superó el límite de 40 segundos.")
+
+            try:
+                await message.reply(
+                    "⏳ Sakura tardó demasiado en recibir respuesta "
+                    "de Gemini. Inténtalo de nuevo en unos segundos.",
+                    mention_author=False,
+                )
+            except discord.HTTPException:
+                logger.exception("No se pudo enviar el aviso de tiempo agotado.")
+
         except Exception as error:
             logger.exception("❌ Error procesando la pregunta.")
 
-            # Mensajes sencillos para los errores más habituales
-            error_text = str(error)
-            lower_error = error_text.lower()
+            error_text = str(error).lower()
 
-            if "404" in error_text or "not_found" in lower_error:
+            if "404" in error_text or "not_found" in error_text:
                 user_message = (
-                    "⚠️ El modelo de Gemini configurado no está disponible. "
+                    "⚠️ El modelo de Gemini no está disponible. "
                     "Revisa GEMINI_MODEL en FadeHost."
                 )
-            elif "429" in error_text or "resource_exhausted" in lower_error:
+            elif "429" in error_text or "resource_exhausted" in error_text:
                 user_message = (
-                    "⏳ Gemini ha alcanzado temporalmente un límite de uso. "
+                    "⏳ Gemini alcanzó un límite de uso. "
                     "Espera un poco y vuelve a intentarlo."
                 )
             elif "401" in error_text or "403" in error_text:
                 user_message = (
                     "🔑 Gemini rechazó la solicitud. "
-                    "Revisa la clave y los permisos de la API."
+                    "Comprueba la clave y los permisos de la API."
                 )
             else:
                 user_message = (
-                    "❌ No pude completar tu pregunta. "
+                    "❌ Ocurrió un error al consultar la IA. "
                     "Revisa los registros de FadeHost."
                 )
 
